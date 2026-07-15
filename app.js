@@ -890,6 +890,37 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 });
 
+                // Merge overlapping or highly adjacent blobs (aperture consolidation for large vehicles like buses/trucks)
+                let mergedBlobs = [];
+                while (blobs.length > 0) {
+                    let current = blobs.shift();
+                    let merged = false;
+                    for (let i = 0; i < mergedBlobs.length; i++) {
+                        let other = mergedBlobs[i];
+                        
+                        const xOverlap = Math.max(0, Math.min(current.maxX, other.maxX) - Math.max(current.minX, other.minX));
+                        const yOverlap = Math.max(0, Math.min(current.maxY, other.maxY) - Math.max(current.minY, other.minY));
+                        
+                        const xGap = Math.max(current.minX - other.maxX, other.minX - current.maxX);
+                        const yGap = Math.max(current.minY - other.maxY, other.minY - current.maxY);
+
+                        // Merge if they overlap or are within 8 cells (32 screen pixels) of each other
+                        if ((xOverlap > 0 || xGap < 8) && (yOverlap > 0 || yGap < 8)) {
+                            other.minX = Math.min(current.minX, other.minX);
+                            other.maxX = Math.max(current.maxX, other.maxX);
+                            other.minY = Math.min(current.minY, other.minY);
+                            other.maxY = Math.max(current.maxY, other.maxY);
+                            other.points = other.points.concat(current.points);
+                            merged = true;
+                            break;
+                        }
+                    }
+                    if (!merged) {
+                        mergedBlobs.push(current);
+                    }
+                }
+                blobs = mergedBlobs;
+
                 const scaleX = elements.cvCanvas.width / width;
                 const scaleY = elements.cvCanvas.height / height;
 
@@ -909,9 +940,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     const isBackground = cy < elements.cvCanvas.height * 0.45;
                     const area = bw * bh;
 
-                    const isTwoWheeler = isBackground 
-                        ? (area < 1100 || bw < 25) 
-                        : (area < 3200 || bw < 42);
+                    let isTwoWheeler = isBackground 
+                        ? (area < 550 || bw < 18) 
+                        : (area < 1600 || bw < 28);
+                    
+                    // Width safety caps to prevent normal sized cars from being marked as bikes
+                    if (isBackground && bw > 30) isTwoWheeler = false;
+                    if (!isBackground && bw > 52) isTwoWheeler = false;
 
                     const isHeavyTruck = isBackground 
                         ? (area > 3800) 
