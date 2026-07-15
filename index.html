@@ -166,8 +166,35 @@
                 </div>
                 <div class="panel-content monitor-content">
                     
+                    <!-- Feed Toggle Tabs -->
+                    <div class="feed-tabs" style="display: flex; gap: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+                        <button class="feed-tab active" id="tab-sim" style="background: rgba(0, 245, 160, 0.1); border: 1px solid var(--accent); color: var(--accent); padding: 6px 12px; border-radius: 4px; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.2s;">
+                            2D Simulator View
+                        </button>
+                        <button class="feed-tab" id="tab-video" style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); color: var(--text-muted); padding: 6px 12px; border-radius: 4px; font-size: 0.8rem; font-weight: 500; cursor: pointer; transition: all 0.2s;">
+                            Real Video Analytics
+                        </button>
+                    </div>
+
+                    <!-- Video control bar (visible in Video Mode) -->
+                    <div id="video-control-bar" style="display: none; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; background: rgba(255,255,255,0.02); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color);">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <button class="btn btn-secondary btn-small" id="btn-feed-a" style="font-size: 0.75rem; padding: 4px 10px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: var(--text); cursor: pointer; border-radius: 4px;">Play Sample A</button>
+                            <button class="btn btn-secondary btn-small" id="btn-feed-b" style="font-size: 0.75rem; padding: 4px 10px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: var(--text); cursor: pointer; border-radius: 4px;">Play Sample B</button>
+                            <span style="color: rgba(255,255,255,0.25); font-size: 0.75rem;">or</span>
+                            <label class="btn btn-secondary btn-small" style="font-size: 0.75rem; padding: 4px 10px; cursor: pointer; display: flex; align-items: center; gap: 4px; background: rgba(0, 245, 160, 0.05); border: 1px solid rgba(0, 245, 160, 0.2); color: var(--accent); border-radius: 4px;">
+                                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"></path></svg>
+                                Upload Local Video
+                                <input type="file" id="video-file-input" accept="video/*" style="display: none;">
+                            </label>
+                        </div>
+                        <span id="video-status" style="font-size: 0.75rem; color: var(--text-muted);">No video loaded</span>
+                    </div>
+                    
                     <!-- Main Stream Container -->
                     <div class="video-container" id="video-container">
+                        <!-- Hidden HTML5 Video element used for rendering analytics frames -->
+                        <video id="monitor-video" style="display: none;" loop muted playsinline></video>
                         
                         <!-- Canvas Intersection Simulation -->
                         <canvas id="sim-canvas" width="640" height="480" class="monitor-canvas active"></canvas>

@@ -47,6 +47,14 @@ document.addEventListener('DOMContentLoaded', () => {
         simCanvas: document.getElementById('sim-canvas'),
         cvCanvas: document.getElementById('cv-canvas'),
         sirenOverlay: document.getElementById('siren-overlay'),
+        monitorVideo: document.getElementById('monitor-video'),
+        tabSim: document.getElementById('tab-sim'),
+        tabVideo: document.getElementById('tab-video'),
+        videoControlBar: document.getElementById('video-control-bar'),
+        btnFeedA: document.getElementById('btn-feed-a'),
+        btnFeedB: document.getElementById('btn-feed-b'),
+        videoFileInput: document.getElementById('video-file-input'),
+        videoStatus: document.getElementById('video-status'),
         triggerEmergencyBtn: document.getElementById('trigger-emergency-btn'),
         clearEmergencyBtn: document.getElementById('clear-emergency-btn'),
         triggerCongestionBtn: document.getElementById('trigger-congestion-btn'),
@@ -726,77 +734,203 @@ document.addEventListener('DOMContentLoaded', () => {
 
         cvCtx.clearRect(0, 0, elements.cvCanvas.width, elements.cvCanvas.height);
 
-        // Simulate YOLOv8/CV Detection by mapping vehicles list directly
-        vehiclesList.forEach((v, index) => {
-            // Sensitivity check: lower sensitivity means lower recall (missed detections)
-            const detectionThreshold = (100 - appState.sensitivity) * 1.2; // 0% drop at 100 sensitivity, 60% drop at 50 sensitivity
-            const randSeed = (v.id % 100);
-            if (randSeed < detectionThreshold) {
-                // Skip detection (simulating missed detection at low sensitivity)
-                return;
-            }
+        if (appState.activeFeed === 'sim') {
+            // --- 2D Simulation Overlay (Simulated YOLOv8 coordinates) ---
+            vehiclesList.forEach((v, index) => {
+                const detectionThreshold = (100 - appState.sensitivity) * 1.2;
+                const randSeed = (v.id % 100);
+                if (randSeed < detectionThreshold) return;
 
-            // Add minor neural net bounding box jitter
-            const jitterX = (Math.sin(Date.now() / 80 + v.id) * 1.5);
-            const jitterY = (Math.cos(Date.now() / 80 + v.id) * 1.5);
+                const jitterX = (Math.sin(Date.now() / 80 + v.id) * 1.5);
+                const jitterY = (Math.cos(Date.now() / 80 + v.id) * 1.5);
+                
+                let bx, by, bw, bh;
+                if (v.direction === 'N' || v.direction === 'S') {
+                    bw = v.width + 4;
+                    bh = v.length + 4;
+                    bx = v.x - bw/2 + jitterX;
+                    by = v.y - bh/2 + jitterY;
+                } else {
+                    bw = v.length + 4;
+                    bh = v.width + 4;
+                    bx = v.x - bw/2 + jitterX;
+                    by = v.y - bh/2 + jitterY;
+                }
+
+                // Draw bounding box
+                cvCtx.strokeStyle = '#00f0ff';
+                cvCtx.lineWidth = 1.5;
+                cvCtx.strokeRect(bx, by, bw, bh);
+
+                cvCtx.save();
+                cvCtx.shadowColor = '#00f0ff';
+                cvCtx.shadowBlur = 6;
+                cvCtx.strokeRect(bx, by, bw, bh);
+                cvCtx.restore();
+
+                // Draw tracking vector arrow
+                cvCtx.beginPath();
+                cvCtx.strokeStyle = '#22c55e'; // green tracking vector
+                cvCtx.lineWidth = 1.5;
+                cvCtx.moveTo(v.x, v.y);
+                let arrowLength = 20;
+                if (v.direction === 'S') cvCtx.lineTo(v.x, v.y + arrowLength);
+                if (v.direction === 'N') cvCtx.lineTo(v.x, v.y - arrowLength);
+                if (v.direction === 'E') cvCtx.lineTo(v.x + arrowLength, v.y);
+                if (v.direction === 'W') cvCtx.lineTo(v.x - arrowLength, v.y);
+                cvCtx.stroke();
+
+                const conf = Math.round(85 + (v.id % 14));
+                let label = v.type.toUpperCase();
+                if (label === 'EMERGENCY') label = 'AMBULANCE';
+                
+                cvCtx.fillStyle = 'rgba(0, 240, 255, 0.85)';
+                cvCtx.fillRect(bx, by - 14, Math.max(75, bw), 14);
+
+                cvCtx.fillStyle = '#0f172a';
+                cvCtx.font = '900 8.5px "JetBrains Mono", monospace';
+                cvCtx.fillText(`${label} [${conf}%]`, bx + 3, by - 4);
+
+                cvCtx.beginPath();
+                cvCtx.strokeStyle = 'rgba(0, 240, 255, 0.3)';
+                cvCtx.arc(v.x, v.y, 4, 0, Math.PI * 2);
+                cvCtx.stroke();
+            });
+        } else {
+            // --- Real Video Analytics Overlay (Frame-differencing & clustering) ---
+            const width = hiddenCanvas.width;
+            const height = hiddenCanvas.height;
             
-            // Calculate screen bounds based on vehicle orientation
-            let bx, by, bw, bh;
-            if (v.direction === 'N' || v.direction === 'S') {
-                bw = v.width + 4;
-                bh = v.length + 4;
-                bx = v.x - bw/2 + jitterX;
-                by = v.y - bh/2 + jitterY;
-            } else {
-                bw = v.length + 4;
-                bh = v.width + 4;
-                bx = v.x - bw/2 + jitterX;
-                by = v.y - bh/2 + jitterY;
+            try {
+                hiddenCtx.drawImage(sourceElement, 0, 0, width, height);
+                const frame = hiddenCtx.getImageData(0, 0, width, height);
+                const data = frame.data;
+
+                // Adjust threshold based on sensitivity
+                let motionThreshold = (100 - appState.sensitivity) * 4.5;
+                let activeCells = [];
+
+                if (prevFrameData) {
+                    for (let y = 0; y < height; y += 4) {
+                        for (let x = 0; x < width; x += 4) {
+                            const idx = (y * width + x) * 4;
+                            
+                            const diffR = Math.abs(data[idx] - prevFrameData[idx]);
+                            const diffG = Math.abs(data[idx+1] - prevFrameData[idx+1]);
+                            const diffB = Math.abs(data[idx+2] - prevFrameData[idx+2]);
+                            const delta = diffR + diffG + diffB;
+
+                            if (delta > motionThreshold) {
+                                activeCells.push({ x, y });
+                            }
+                        }
+                    }
+                }
+                prevFrameData = data;
+
+                // Simple clustering/blob grouping of active cells
+                let blobs = [];
+                let cellChecked = new Set();
+                const cellDistThreshold = 20;
+
+                activeCells.forEach(cell => {
+                    const cellKey = `${cell.x},${cell.y}`;
+                    if (cellChecked.has(cellKey)) return;
+
+                    let blob = { minX: cell.x, maxX: cell.x, minY: cell.y, maxY: cell.y, points: [cell] };
+                    let queue = [cell];
+                    cellChecked.add(cellKey);
+
+                    while (queue.length > 0) {
+                        let current = queue.shift();
+                        
+                        activeCells.forEach(neighbor => {
+                            const neighborKey = `${neighbor.x},${neighbor.y}`;
+                            if (cellChecked.has(neighborKey)) return;
+
+                            const dx = Math.abs(current.x - neighbor.x);
+                            const dy = Math.abs(current.y - neighbor.y);
+                            if (dx <= cellDistThreshold && dy <= cellDistThreshold) {
+                                cellChecked.add(neighborKey);
+                                queue.push(neighbor);
+                                
+                                blob.minX = Math.min(blob.minX, neighbor.x);
+                                blob.maxX = Math.max(blob.maxX, neighbor.x);
+                                blob.minY = Math.min(blob.minY, neighbor.y);
+                                blob.maxY = Math.max(blob.maxY, neighbor.y);
+                                blob.points.push(neighbor);
+                            }
+                        });
+                    }
+
+                    const w = blob.maxX - blob.minX;
+                    const h = blob.maxY - blob.minY;
+                    const minPoints = Math.max(4, Math.round(20 - (appState.sensitivity - 50) * 0.35));
+                    if (w > 3 && h > 3 && blob.points.length > minPoints) {
+                        blobs.push(blob);
+                    }
+                });
+
+                const scaleX = elements.cvCanvas.width / width;
+                const scaleY = elements.cvCanvas.height / height;
+
+                // Reset metrics for this video frame
+                let detectedCars = 0;
+                let detectedTrucks = 0;
+                let detectedBikes = 0;
+
+                blobs.forEach((blob, index) => {
+                    let bx = blob.minX * scaleX;
+                    let by = blob.minY * scaleY;
+                    let bw = (blob.maxX - blob.minX + 4) * scaleX;
+                    let bh = (blob.maxY - blob.minY + 4) * scaleY;
+
+                    // Draw bounding box
+                    cvCtx.strokeStyle = '#00f0ff';
+                    cvCtx.lineWidth = 1.5;
+                    cvCtx.strokeRect(bx, by, bw, bh);
+
+                    cvCtx.save();
+                    cvCtx.shadowColor = '#00f0ff';
+                    cvCtx.shadowBlur = 6;
+                    cvCtx.strokeRect(bx, by, bw, bh);
+                    cvCtx.restore();
+
+                    // Object label matching based on width & height ratio
+                    let label = 'CAR';
+                    if (bw * bh > 12000) {
+                        label = 'HEAVY TRUCK';
+                        detectedTrucks++;
+                    } else if (bw < 45 || bh < 45) {
+                        label = 'TWO-WHEELER';
+                        detectedBikes++;
+                    } else {
+                        detectedCars++;
+                    }
+
+                    const conf = Math.round(80 + (index * 7 + 4) % 18);
+
+                    // Label tag background
+                    cvCtx.fillStyle = 'rgba(0, 240, 255, 0.85)';
+                    cvCtx.fillRect(bx, by - 14, Math.max(75, bw), 14);
+
+                    // Label tag text
+                    cvCtx.fillStyle = '#0f172a';
+                    cvCtx.font = '900 8.5px "JetBrains Mono", monospace';
+                    cvCtx.fillText(`${label} [${conf}%]`, bx + 3, by - 4);
+                });
+
+                // Sync metrics from real video CV engine to dashboard
+                appState.stats.counts.cars = detectedCars;
+                appState.stats.counts.trucks = detectedTrucks;
+                appState.stats.counts.bikes = detectedBikes;
+                appState.stats.totalVehicles = detectedCars + detectedTrucks + detectedBikes;
+                appState.stats.congestionIndex = Math.min(100, Math.round((detectedCars + detectedTrucks * 1.5 + detectedBikes * 0.5) * 8.5));
+                appState.stats.avgSpeed = Math.round(35 + (detectedCars % 3) * 4); // Simulated average speed
+            } catch (e) {
+                console.error("Video frame processing error: ", e);
             }
-
-            // Draw bounding box
-            cvCtx.strokeStyle = '#00f0ff';
-            cvCtx.lineWidth = 1.5;
-            cvCtx.strokeRect(bx, by, bw, bh);
-
-            // Bounding box glow
-            cvCtx.save();
-            cvCtx.shadowColor = '#00f0ff';
-            cvCtx.shadowBlur = 6;
-            cvCtx.strokeRect(bx, by, bw, bh);
-            cvCtx.restore();
-
-            // Draw tracking vector arrow
-            cvCtx.beginPath();
-            cvCtx.strokeStyle = '#22c55e'; // green tracking vector
-            cvCtx.lineWidth = 1.5;
-            cvCtx.moveTo(v.x, v.y);
-            let arrowLength = 20;
-            if (v.direction === 'S') cvCtx.lineTo(v.x, v.y + arrowLength);
-            if (v.direction === 'N') cvCtx.lineTo(v.x, v.y - arrowLength);
-            if (v.direction === 'E') cvCtx.lineTo(v.x + arrowLength, v.y);
-            if (v.direction === 'W') cvCtx.lineTo(v.x - arrowLength, v.y);
-            cvCtx.stroke();
-
-            // Label tag background
-            const conf = Math.round(85 + (v.id % 14));
-            let label = v.type.toUpperCase();
-            if (label === 'EMERGENCY') label = 'AMBULANCE';
-            
-            cvCtx.fillStyle = 'rgba(0, 240, 255, 0.85)';
-            cvCtx.fillRect(bx, by - 14, Math.max(75, bw), 14);
-
-            // Label tag text
-            cvCtx.fillStyle = '#0f172a';
-            cvCtx.font = '900 8.5px "JetBrains Mono", monospace';
-            cvCtx.fillText(`${label} [${conf}%]`, bx + 3, by - 4);
-
-            // Virtual sensor crosshair center points
-            cvCtx.beginPath();
-            cvCtx.strokeStyle = 'rgba(0, 240, 255, 0.3)';
-            cvCtx.arc(v.x, v.y, 4, 0, Math.PI * 2);
-            cvCtx.stroke();
-        });
+        }
     }
 
     // --- UI Metrics Display updates ---
@@ -853,92 +987,117 @@ document.addEventListener('DOMContentLoaded', () => {
             elements.fpsDisplay.innerText = `FPS: ${appState.fps}`;
         }
 
-        // Draw background & roads
-        drawIntersectionLayout();
+        if (appState.activeFeed === 'sim') {
+            // --- 2D Intersection Simulator ---
+            // Draw background & roads
+            drawIntersectionLayout();
 
-        // Lanes grouping
-        let lanes = { N: [], S: [], E: [], W: [] };
-        vehiclesList.forEach(v => lanes[v.direction].push(v));
+            // Lanes grouping
+            let lanes = { N: [], S: [], E: [], W: [] };
+            vehiclesList.forEach(v => lanes[v.direction].push(v));
 
-        // Update & Draw vehicles
-        vehiclesList.forEach(v => {
-            v.update(lanes[v.direction]);
-            v.draw();
-        });
+            // Update & Draw vehicles
+            vehiclesList.forEach(v => {
+                v.update(lanes[v.direction]);
+                v.draw();
+            });
 
-        // Filter out off-screen vehicles
-        const prevLen = vehiclesList.length;
-        vehiclesList = vehiclesList.filter(v => {
-            const off = v.isOffscreen();
-            if (off) {
-                appState.stats.totalVehicles++;
+            // Filter out off-screen vehicles
+            const prevLen = vehiclesList.length;
+            vehiclesList = vehiclesList.filter(v => {
+                const off = v.isOffscreen();
+                if (off) {
+                    appState.stats.totalVehicles++;
+                }
+                return !off;
+            });
+
+            // Auto spawn simulation vehicles randomly
+            const spawnChance = 0.015; // frequency weight
+            if (Math.random() < spawnChance && vehiclesList.length < 14) {
+                const lanesDirs = ['N', 'S', 'E', 'W'];
+                const selectedDir = lanesDirs[Math.floor(Math.random() * lanesDirs.length)];
+                spawnVehicle(selectedDir);
             }
-            return !off;
-        });
 
-        // Auto spawn simulation vehicles randomly
-        const spawnChance = 0.015; // frequency weight
-        if (Math.random() < spawnChance && vehiclesList.length < 14) {
-            const lanesDirs = ['N', 'S', 'E', 'W'];
-            const selectedDir = lanesDirs[Math.floor(Math.random() * lanesDirs.length)];
-            spawnVehicle(selectedDir);
-        }
+            // Sync metrics based on current simulator status
+            let carC = 0, truckC = 0, bikeC = 0;
+            vehiclesList.forEach(v => {
+                if (v.type === 'car') carC++;
+                if (v.type === 'truck') truckC++;
+                if (v.type === 'bike') bikeC++;
+            });
+            appState.stats.counts.cars = carC;
+            appState.stats.counts.trucks = truckC;
+            appState.stats.counts.bikes = bikeC;
 
-        // Sync metrics based on current simulator status
-        let carC = 0, truckC = 0, bikeC = 0;
-        vehiclesList.forEach(v => {
-            if (v.type === 'car') carC++;
-            if (v.type === 'truck') truckC++;
-            if (v.type === 'bike') bikeC++;
-        });
-        appState.stats.counts.cars = carC;
-        appState.stats.counts.trucks = truckC;
-        appState.stats.counts.bikes = bikeC;
-
-        // Congestion = current vehicle density on lanes
-        appState.stats.congestionIndex = Math.min(100, Math.round(vehiclesList.length * 7.5));
-        
-        // Average speed computation
-        let totalSpeed = 0;
-        vehiclesList.forEach(v => totalSpeed += v.speed);
-        const simulatedAvg = vehiclesList.length > 0 ? (totalSpeed / vehiclesList.length) * 15 : 45;
-        appState.stats.avgSpeed = Math.round(simulatedAvg);
-
-        updateMetricsUI();
-
-        // Run computer vision overlays directly targeting simulation canvas!
-        processCVFrame(elements.simCanvas);
-
-        // Traffic Light timers
-        updateSignalTimers(dt);
-
-        // Automatic Emergency Vehicle detection & preemption override
-        const emergencyVehicles = vehiclesList.filter(v => v.type === 'emergency');
-        if (emergencyVehicles.length > 0) {
-            const firstAmbulance = emergencyVehicles[0];
+            // Congestion = current vehicle density on lanes
+            appState.stats.congestionIndex = Math.min(100, Math.round(vehiclesList.length * 7.5));
             
-            // Map direction to approach lane
-            let lane = 'N';
-            if (firstAmbulance.direction === 'N') lane = 'S';
-            if (firstAmbulance.direction === 'E') lane = 'W';
-            if (firstAmbulance.direction === 'W') lane = 'E';
+            // Average speed computation
+            let totalSpeed = 0;
+            vehiclesList.forEach(v => totalSpeed += v.speed);
+            const simulatedAvg = vehiclesList.length > 0 ? (totalSpeed / vehiclesList.length) * 15 : 45;
+            appState.stats.avgSpeed = Math.round(simulatedAvg);
 
-            // Trigger emergency mode automatically for this lane
-            if (!appState.emergencyActive || appState.preemptionLane !== lane) {
-                triggerEmergencyMode(lane, false);
+            updateMetricsUI();
+
+            // Run computer vision overlays directly targeting simulation canvas!
+            processCVFrame(elements.simCanvas);
+
+            // Traffic Light timers
+            updateSignalTimers(dt);
+
+            // Automatic Emergency Vehicle detection & preemption override
+            const emergencyVehicles = vehiclesList.filter(v => v.type === 'emergency');
+            if (emergencyVehicles.length > 0) {
+                const firstAmbulance = emergencyVehicles[0];
+                
+                // Map direction to approach lane
+                let lane = 'N';
+                if (firstAmbulance.direction === 'N') lane = 'S';
+                if (firstAmbulance.direction === 'E') lane = 'W';
+                if (firstAmbulance.direction === 'W') lane = 'E';
+
+                // Trigger emergency mode automatically for this lane
+                if (!appState.emergencyActive || appState.preemptionLane !== lane) {
+                    triggerEmergencyMode(lane, false);
+                }
+                
+                // Lock the countdown timer at 8 seconds until the vehicle is off screen
+                appState.preemptionTimer = 8;
+            } else if (appState.emergencyActive) {
+                // Once ambulance clears, restrict clear time to 3 seconds
+                if (appState.preemptionTimer > 3) {
+                    appState.preemptionTimer = 3;
+                }
+                appState.preemptionTimer -= dt;
+                if (appState.preemptionTimer <= 0) {
+                    disableEmergencyMode();
+                }
+            }
+        } else {
+            // --- Real Video Analytics ---
+            if (elements.monitorVideo.readyState >= 2) {
+                // Draw current video frame to sim-canvas
+                simCtx.drawImage(elements.monitorVideo, 0, 0, elements.simCanvas.width, elements.simCanvas.height);
+                
+                // Run motion analysis and draw overlays
+                processCVFrame(elements.monitorVideo);
+            } else {
+                // Video loading state
+                simCtx.fillStyle = '#111726';
+                simCtx.fillRect(0, 0, elements.simCanvas.width, elements.simCanvas.height);
+                
+                simCtx.fillStyle = 'rgba(255,255,255,0.7)';
+                simCtx.font = '500 13px "Outfit", sans-serif';
+                simCtx.textAlign = 'center';
+                simCtx.fillText('No video feed playing. Choose Feed A/B or upload an MP4/WebM local file.', elements.simCanvas.width / 2, elements.simCanvas.height / 2);
+                simCtx.textAlign = 'left';
             }
             
-            // Lock the countdown timer at 8 seconds until the vehicle is off screen
-            appState.preemptionTimer = 8;
-        } else if (appState.emergencyActive) {
-            // Once ambulance clears, restrict clear time to 3 seconds
-            if (appState.preemptionTimer > 3) {
-                appState.preemptionTimer = 3;
-            }
-            appState.preemptionTimer -= dt;
-            if (appState.preemptionTimer <= 0) {
-                disableEmergencyMode();
-            }
+            // Still update the indicators dashboard
+            updateMetricsUI();
         }
 
         // Loop next frame animation
@@ -1089,6 +1248,96 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+    // --- Feed Tab Toggling & Video Handling ---
+    elements.tabSim.addEventListener('click', () => {
+        appState.activeFeed = 'sim';
+        elements.tabSim.classList.add('active');
+        elements.tabSim.style.background = 'rgba(0, 245, 160, 0.1)';
+        elements.tabSim.style.borderColor = 'var(--accent)';
+        elements.tabSim.style.color = 'var(--accent)';
+
+        elements.tabVideo.classList.remove('active');
+        elements.tabVideo.style.background = 'rgba(255,255,255,0.02)';
+        elements.tabVideo.style.borderColor = 'var(--border-color)';
+        elements.tabVideo.style.color = 'var(--text-muted)';
+
+        elements.videoControlBar.style.display = 'none';
+        elements.monitorVideo.pause();
+        logEvent('system', 'Switched display to 2D Intersection Simulator.');
+    });
+
+    elements.tabVideo.addEventListener('click', () => {
+        appState.activeFeed = 'video';
+        elements.tabVideo.classList.add('active');
+        elements.tabVideo.style.background = 'rgba(0, 245, 160, 0.1)';
+        elements.tabVideo.style.borderColor = 'var(--accent)';
+        elements.tabVideo.style.color = 'var(--accent)';
+
+        elements.tabSim.classList.remove('active');
+        elements.tabSim.style.background = 'rgba(255,255,255,0.02)';
+        elements.tabSim.style.borderColor = 'var(--border-color)';
+        elements.tabSim.style.color = 'var(--text-muted)';
+
+        elements.videoControlBar.style.display = 'flex';
+        
+        // If a video is already loaded, resume play
+        if (elements.monitorVideo.src) {
+            elements.monitorVideo.play().catch(err => console.log('Video play deferred:', err));
+        }
+        logEvent('system', 'Switched display to Live Video Analytics Mode.');
+    });
+
+    // Sample video feeds urls
+    const sampleFeedAUrl = 'https://assets.mixkit.co/videos/preview/mixkit-traffic-in-a-large-avenue-of-a-city-43183-large.mp4';
+    const sampleFeedBUrl = 'https://assets.mixkit.co/videos/preview/mixkit-intersection-of-a-city-with-a-lot-of-traffic-43187-large.mp4';
+
+    elements.btnFeedA.addEventListener('click', () => {
+        elements.videoStatus.innerText = 'Loading Sample Feed A...';
+        elements.monitorVideo.src = sampleFeedAUrl;
+        elements.monitorVideo.play()
+            .then(() => {
+                elements.videoStatus.innerText = 'Playing: Sample Feed A';
+                logEvent('iot-hub', 'Running real-time CV differencing on Feed A...');
+            })
+            .catch(err => {
+                elements.videoStatus.innerText = 'Failed to load video';
+                console.error(err);
+            });
+    });
+
+    elements.btnFeedB.addEventListener('click', () => {
+        elements.videoStatus.innerText = 'Loading Sample Feed B...';
+        elements.monitorVideo.src = sampleFeedBUrl;
+        elements.monitorVideo.play()
+            .then(() => {
+                elements.videoStatus.innerText = 'Playing: Sample Feed B';
+                logEvent('iot-hub', 'Running real-time CV differencing on Feed B...');
+            })
+            .catch(err => {
+                elements.videoStatus.innerText = 'Failed to load video';
+                console.error(err);
+            });
+    });
+
+    // File input changes
+    elements.videoFileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            elements.videoStatus.innerText = `Loading: ${file.name}...`;
+            const fileURL = URL.createObjectURL(file);
+            elements.monitorVideo.src = fileURL;
+            elements.monitorVideo.play()
+                .then(() => {
+                    elements.videoStatus.innerText = `Playing Local Video: ${file.name}`;
+                    logEvent('system', `User loaded custom video file: ${file.name}. Commencing frame differencing.`);
+                })
+                .catch(err => {
+                    elements.videoStatus.innerText = 'Failed to play uploaded video';
+                    console.error(err);
+                });
+        }
+    });
 
     // --- Metric Updates Cron/Timers ---
     setInterval(() => {
