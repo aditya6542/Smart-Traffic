@@ -879,9 +879,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 const scaleX = elements.cvCanvas.width / width;
                 const scaleY = elements.cvCanvas.height / height;
 
-                // --- Centroid Tracking Algorithm for video cumulative counting ---
+                // --- Map current blobs to centroids & bounds objects ---
                 let currentCentroids = [];
-                blobs.forEach(blob => {
+                blobs.forEach((blob, index) => {
                     let bx = blob.minX * scaleX;
                     let by = blob.minY * scaleY;
                     let bw = (blob.maxX - blob.minX + 4) * scaleX;
@@ -889,7 +889,29 @@ document.addEventListener('DOMContentLoaded', () => {
                     
                     let cx = bx + bw / 2;
                     let cy = by + bh / 2;
-                    currentCentroids.push({ x: cx, y: cy, matched: false });
+                    
+                    // Object classification based on bounding box dimensions
+                    let label = 'CAR';
+                    if (bw * bh > 12000) {
+                        label = 'HEAVY TRUCK';
+                    } else if (bw < 45 || bh < 45) {
+                        label = 'TWO-WHEELER';
+                    }
+
+                    // Confidence score
+                    const confidence = Math.round(80 + (index * 7 + 4) % 18);
+
+                    currentCentroids.push({ 
+                        x: cx, 
+                        y: cy, 
+                        bx, 
+                        by, 
+                        bw, 
+                        bh, 
+                        label, 
+                        confidence, 
+                        matched: false 
+                    });
                 });
 
                 // Match current centroids with existing tracked vehicles
@@ -913,19 +935,31 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (bestMatch) {
                         bestMatch.x = cc.x;
                         bestMatch.y = cc.y;
+                        bestMatch.bx = cc.bx;
+                        bestMatch.by = cc.by;
+                        bestMatch.bw = cc.bw;
+                        bestMatch.bh = cc.bh;
+                        bestMatch.label = cc.label;
+                        bestMatch.confidence = cc.confidence;
                         bestMatch.framesSinceLastSeen = 0;
                         bestMatch.matched = true;
                         cc.matched = true;
                     }
                 });
 
-                // Add newly detected centroids as new tracked vehicles and increment cumulative count!
+                // Add newly detected centroids as new tracked vehicles
                 currentCentroids.forEach(cc => {
                     if (!cc.matched) {
                         trackedVehicles.push({
                             id: nextVehicleId++,
                             x: cc.x,
                             y: cc.y,
+                            bx: cc.bx,
+                            by: cc.by,
+                            bw: cc.bw,
+                            bh: cc.bh,
+                            label: cc.label,
+                            confidence: cc.confidence,
                             framesSinceLastSeen: 0,
                             matched: true
                         });
@@ -934,56 +968,55 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 });
 
-                // Clean up tracked vehicles that went off screen (not seen for 15 frames)
-                trackedVehicles = trackedVehicles.filter(tv => tv.framesSinceLastSeen < 15);
+                // Clean up tracked vehicles that went off screen or became stale
+                const boundaryThreshold = 25; // pixels from screen boundary
+                trackedVehicles = trackedVehicles.filter(tv => {
+                    const isNearEdge = tv.x < boundaryThreshold || 
+                                       tv.x > elements.cvCanvas.width - boundaryThreshold || 
+                                       tv.y < boundaryThreshold || 
+                                       tv.y > elements.cvCanvas.height - boundaryThreshold;
+                                       
+                    return tv.framesSinceLastSeen < 20 && !isNearEdge;
+                });
 
-                // Update cumulative GUI counter!
+                // Update cumulative GUI counter
                 elements.videoCumulativeCount.innerText = cumulativeVideoCount;
 
-                // Reset metrics for this video frame
+                // Draw tracked bounding boxes on screen & update counters
                 let detectedCars = 0;
                 let detectedTrucks = 0;
                 let detectedBikes = 0;
 
-                blobs.forEach((blob, index) => {
-                    let bx = blob.minX * scaleX;
-                    let by = blob.minY * scaleY;
-                    let bw = (blob.maxX - blob.minX + 4) * scaleX;
-                    let bh = (blob.maxY - blob.minY + 4) * scaleY;
+                trackedVehicles.forEach(tv => {
+                    // Update KPI counters
+                    if (tv.label === 'HEAVY TRUCK') detectedTrucks++;
+                    else if (tv.label === 'TWO-WHEELER') detectedBikes++;
+                    else detectedCars++;
 
-                    // Draw bounding box
-                    cvCtx.strokeStyle = '#00f0ff';
+                    let bx = tv.bx;
+                    let by = tv.by;
+                    let bw = tv.bw;
+                    let bh = tv.bh;
+
+                    // Draw bounding box (slight transparency if predicted/not seen in this frame)
+                    cvCtx.strokeStyle = tv.framesSinceLastSeen > 0 ? 'rgba(0, 240, 255, 0.45)' : '#00f0ff';
                     cvCtx.lineWidth = 1.5;
                     cvCtx.strokeRect(bx, by, bw, bh);
 
                     cvCtx.save();
                     cvCtx.shadowColor = '#00f0ff';
-                    cvCtx.shadowBlur = 6;
+                    cvCtx.shadowBlur = tv.framesSinceLastSeen > 0 ? 2 : 6;
                     cvCtx.strokeRect(bx, by, bw, bh);
                     cvCtx.restore();
 
-                    // Object label matching based on width & height ratio
-                    let label = 'CAR';
-                    if (bw * bh > 12000) {
-                        label = 'HEAVY TRUCK';
-                        detectedTrucks++;
-                    } else if (bw < 45 || bh < 45) {
-                        label = 'TWO-WHEELER';
-                        detectedBikes++;
-                    } else {
-                        detectedCars++;
-                    }
-
-                    const conf = Math.round(80 + (index * 7 + 4) % 18);
-
                     // Label tag background
-                    cvCtx.fillStyle = 'rgba(0, 240, 255, 0.85)';
+                    cvCtx.fillStyle = tv.framesSinceLastSeen > 0 ? 'rgba(0, 240, 255, 0.4)' : 'rgba(0, 240, 255, 0.85)';
                     cvCtx.fillRect(bx, by - 14, Math.max(75, bw), 14);
 
                     // Label tag text
-                    cvCtx.fillStyle = '#0f172a';
+                    cvCtx.fillStyle = tv.framesSinceLastSeen > 0 ? 'rgba(15, 23, 42, 0.6)' : '#0f172a';
                     cvCtx.font = '900 8.5px "JetBrains Mono", monospace';
-                    cvCtx.fillText(`${label} [${conf}%]`, bx + 3, by - 4);
+                    cvCtx.fillText(`${tv.label} [${tv.confidence}%]`, bx + 3, by - 4);
                 });
 
                 // Sync metrics from real video CV engine to dashboard
