@@ -107,6 +107,7 @@ document.addEventListener('DOMContentLoaded', () => {
     hiddenCanvas.height = 120;
     const hiddenCtx = hiddenCanvas.getContext('2d');
     let prevFrameData = null;
+    let backgroundFrame = null;
     let trackedVehicles = [];
     let nextVehicleId = 1;
     let cumulativeVideoCount = 0;
@@ -815,23 +816,36 @@ document.addEventListener('DOMContentLoaded', () => {
                 let motionThreshold = (100 - appState.sensitivity) * 4.5;
                 let activeCells = [];
 
-                if (prevFrameData) {
-                    for (let y = 0; y < height; y += 4) {
-                        for (let x = 0; x < width; x += 4) {
-                            const idx = (y * width + x) * 4;
-                            
-                            const diffR = Math.abs(data[idx] - prevFrameData[idx]);
-                            const diffG = Math.abs(data[idx+1] - prevFrameData[idx+1]);
-                            const diffB = Math.abs(data[idx+2] - prevFrameData[idx+2]);
-                            const delta = diffR + diffG + diffB;
+                // Initialize background frame if null
+                if (!backgroundFrame) {
+                    backgroundFrame = new Float32Array(data.length);
+                    for (let i = 0; i < data.length; i++) {
+                        backgroundFrame[i] = data[i];
+                    }
+                }
 
-                            if (delta > motionThreshold) {
-                                activeCells.push({ x, y });
-                            }
+                // Update running background using adaptive learning rate
+                const alpha = 0.025; // learning rate for background adaptation
+                for (let i = 0; i < data.length; i += 4) {
+                    backgroundFrame[i]     = backgroundFrame[i]     * (1 - alpha) + data[i]     * alpha;
+                    backgroundFrame[i + 1] = backgroundFrame[i + 1] * (1 - alpha) + data[i + 1] * alpha;
+                    backgroundFrame[i + 2] = backgroundFrame[i + 2] * (1 - alpha) + data[i + 2] * alpha;
+                }
+
+                for (let y = 0; y < height; y += 4) {
+                    for (let x = 0; x < width; x += 4) {
+                        const idx = (y * width + x) * 4;
+                        
+                        const diffR = Math.abs(data[idx]     - backgroundFrame[idx]);
+                        const diffG = Math.abs(data[idx + 1] - backgroundFrame[idx + 1]);
+                        const diffB = Math.abs(data[idx + 2] - backgroundFrame[idx + 2]);
+                        const delta = diffR + diffG + diffB;
+
+                        if (delta > motionThreshold) {
+                            activeCells.push({ x, y });
                         }
                     }
                 }
-                prevFrameData = data;
 
                 // Simple clustering/blob grouping of active cells
                 let blobs = [];
@@ -1407,17 +1421,18 @@ document.addEventListener('DOMContentLoaded', () => {
     elements.btnFeedA.addEventListener('click', () => {
         elements.videoStatus.innerText = 'Loading Sample Feed A...';
         
-        // Reset cumulative video counts
+        // Reset cumulative video counts & background extraction
         cumulativeVideoCount = 0;
         nextVehicleId = 1;
         trackedVehicles = [];
+        backgroundFrame = null;
         elements.videoCumulativeCount.innerText = '0';
 
         elements.monitorVideo.src = sampleFeedAUrl;
         elements.monitorVideo.play()
             .then(() => {
                 elements.videoStatus.innerText = 'Playing: Sample Feed A';
-                logEvent('iot-hub', 'Running real-time CV differencing on Feed A...');
+                logEvent('iot-hub', 'Running real-time YOLOv8 Simulation on Feed A...');
             })
             .catch(err => {
                 elements.videoStatus.innerText = 'Failed to load video';
@@ -1428,17 +1443,18 @@ document.addEventListener('DOMContentLoaded', () => {
     elements.btnFeedB.addEventListener('click', () => {
         elements.videoStatus.innerText = 'Loading Sample Feed B...';
         
-        // Reset cumulative video counts
+        // Reset cumulative video counts & background extraction
         cumulativeVideoCount = 0;
         nextVehicleId = 1;
         trackedVehicles = [];
+        backgroundFrame = null;
         elements.videoCumulativeCount.innerText = '0';
 
         elements.monitorVideo.src = sampleFeedBUrl;
         elements.monitorVideo.play()
             .then(() => {
                 elements.videoStatus.innerText = 'Playing: Sample Feed B';
-                logEvent('iot-hub', 'Running real-time CV differencing on Feed B...');
+                logEvent('iot-hub', 'Running real-time YOLOv8 Simulation on Feed B...');
             })
             .catch(err => {
                 elements.videoStatus.innerText = 'Failed to load video';
@@ -1452,10 +1468,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (file) {
             elements.videoStatus.innerText = `Loading: ${file.name}...`;
             
-            // Reset cumulative video counts
+            // Reset cumulative video counts & background extraction
             cumulativeVideoCount = 0;
             nextVehicleId = 1;
             trackedVehicles = [];
+            backgroundFrame = null;
             elements.videoCumulativeCount.innerText = '0';
 
             const fileURL = URL.createObjectURL(file);
@@ -1463,7 +1480,7 @@ document.addEventListener('DOMContentLoaded', () => {
             elements.monitorVideo.play()
                 .then(() => {
                     elements.videoStatus.innerText = `Playing Local Video: ${file.name}`;
-                    logEvent('system', `User loaded custom video file: ${file.name}. Commencing frame differencing.`);
+                    logEvent('system', `User loaded custom video file: ${file.name}. Initializing YOLOv8 simulation overlay.`);
                 })
                 .catch(err => {
                     elements.videoStatus.innerText = 'Failed to play uploaded video';
