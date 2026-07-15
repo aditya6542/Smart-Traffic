@@ -836,7 +836,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Simple clustering/blob grouping of active cells
                 let blobs = [];
                 let cellChecked = new Set();
-                const cellDistThreshold = 20;
+                const cellDistThreshold = 6;
 
                 activeCells.forEach(cell => {
                     const cellKey = `${cell.x},${cell.y}`;
@@ -870,8 +870,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     const w = blob.maxX - blob.minX;
                     const h = blob.maxY - blob.minY;
-                    const minPoints = Math.max(4, Math.round(20 - (appState.sensitivity - 50) * 0.35));
-                    if (w > 3 && h > 3 && blob.points.length > minPoints) {
+                    const minPoints = Math.max(3, Math.round(10 - (appState.sensitivity - 50) * 0.15));
+                    if (w > 1 && h > 1 && blob.points.length > minPoints) {
                         blobs.push(blob);
                     }
                 });
@@ -882,19 +882,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 // --- Map current blobs to centroids & bounds objects ---
                 let currentCentroids = [];
                 blobs.forEach((blob, index) => {
-                    let bx = blob.minX * scaleX;
-                    let by = blob.minY * scaleY;
-                    let bw = (blob.maxX - blob.minX + 4) * scaleX;
-                    let bh = (blob.maxY - blob.minY + 4) * scaleY;
+                    let bw = Math.max(16, (blob.maxX - blob.minX + 1.2) * scaleX);
+                    let bh = Math.max(16, (blob.maxY - blob.minY + 1.2) * scaleY);
+                    let bx = blob.minX * scaleX - 2;
+                    let by = blob.minY * scaleY - 2;
                     
                     let cx = bx + bw / 2;
                     let cy = by + bh / 2;
                     
-                    // Object classification based on bounding box dimensions
+                    // Object classification based on bounding box dimensions and screen position (perspective-aware)
                     let label = 'CAR';
-                    if (bw * bh > 12000) {
+                    const twoWheelerThreshold = cy < elements.cvCanvas.height * 0.45 ? 18 : 38;
+                    const heavyTruckThreshold = cy < elements.cvCanvas.height * 0.45 ? 4000 : 12000;
+
+                    if (bw * bh > heavyTruckThreshold) {
                         label = 'HEAVY TRUCK';
-                    } else if (bw < 45 || bh < 45) {
+                    } else if (bw < twoWheelerThreshold || bh < twoWheelerThreshold) {
                         label = 'TWO-WHEELER';
                     }
 
