@@ -870,8 +870,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     const w = blob.maxX - blob.minX;
                     const h = blob.maxY - blob.minY;
-                    const minPoints = Math.max(3, Math.round(10 - (appState.sensitivity - 50) * 0.15));
-                    if (w > 1 && h > 1 && blob.points.length > minPoints) {
+                    const minPoints = Math.max(2, Math.round(7 - (appState.sensitivity - 50) * 0.1));
+                    if (w > 0 && h > 0 && blob.points.length > minPoints) {
                         blobs.push(blob);
                     }
                 });
@@ -892,12 +892,20 @@ document.addEventListener('DOMContentLoaded', () => {
                     
                     // Object classification based on bounding box dimensions and screen position (perspective-aware)
                     let label = 'CAR';
-                    const twoWheelerThreshold = cy < elements.cvCanvas.height * 0.45 ? 18 : 38;
-                    const heavyTruckThreshold = cy < elements.cvCanvas.height * 0.45 ? 4000 : 12000;
+                    const isBackground = cy < elements.cvCanvas.height * 0.45;
+                    const area = bw * bh;
 
-                    if (bw * bh > heavyTruckThreshold) {
+                    const isTwoWheeler = isBackground 
+                        ? (area < 1100 || bw < 25) 
+                        : (area < 3200 || bw < 42);
+
+                    const isHeavyTruck = isBackground 
+                        ? (area > 3800) 
+                        : (area > 11500);
+
+                    if (isHeavyTruck) {
                         label = 'HEAVY TRUCK';
-                    } else if (bw < twoWheelerThreshold || bh < twoWheelerThreshold) {
+                    } else if (isTwoWheeler) {
                         label = 'TWO-WHEELER';
                     }
 
