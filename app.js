@@ -55,6 +55,8 @@ document.addEventListener('DOMContentLoaded', () => {
         btnFeedB: document.getElementById('btn-feed-b'),
         videoFileInput: document.getElementById('video-file-input'),
         videoStatus: document.getElementById('video-status'),
+        videoCumulativeRow: document.getElementById('video-cumulative-row'),
+        videoCumulativeCount: document.getElementById('video-cumulative-count'),
         triggerEmergencyBtn: document.getElementById('trigger-emergency-btn'),
         clearEmergencyBtn: document.getElementById('clear-emergency-btn'),
         triggerCongestionBtn: document.getElementById('trigger-congestion-btn'),
@@ -105,6 +107,9 @@ document.addEventListener('DOMContentLoaded', () => {
     hiddenCanvas.height = 120;
     const hiddenCtx = hiddenCanvas.getContext('2d');
     let prevFrameData = null;
+    let trackedVehicles = [];
+    let nextVehicleId = 1;
+    let cumulativeVideoCount = 0;
 
     // --- 2D Simulator Constants & Setup ---
     const simCtx = elements.simCanvas.getContext('2d');
@@ -874,6 +879,67 @@ document.addEventListener('DOMContentLoaded', () => {
                 const scaleX = elements.cvCanvas.width / width;
                 const scaleY = elements.cvCanvas.height / height;
 
+                // --- Centroid Tracking Algorithm for video cumulative counting ---
+                let currentCentroids = [];
+                blobs.forEach(blob => {
+                    let bx = blob.minX * scaleX;
+                    let by = blob.minY * scaleY;
+                    let bw = (blob.maxX - blob.minX + 4) * scaleX;
+                    let bh = (blob.maxY - blob.minY + 4) * scaleY;
+                    
+                    let cx = bx + bw / 2;
+                    let cy = by + bh / 2;
+                    currentCentroids.push({ x: cx, y: cy, matched: false });
+                });
+
+                // Match current centroids with existing tracked vehicles
+                trackedVehicles.forEach(tv => {
+                    tv.matched = false;
+                    tv.framesSinceLastSeen++;
+                });
+
+                currentCentroids.forEach(cc => {
+                    let bestMatch = null;
+                    let minDistance = 45; // pixel matching radius
+
+                    trackedVehicles.forEach(tv => {
+                        let dist = Math.hypot(cc.x - tv.x, cc.y - tv.y);
+                        if (dist < minDistance) {
+                            minDistance = dist;
+                            bestMatch = tv;
+                        }
+                    });
+
+                    if (bestMatch) {
+                        bestMatch.x = cc.x;
+                        bestMatch.y = cc.y;
+                        bestMatch.framesSinceLastSeen = 0;
+                        bestMatch.matched = true;
+                        cc.matched = true;
+                    }
+                });
+
+                // Add newly detected centroids as new tracked vehicles and increment cumulative count!
+                currentCentroids.forEach(cc => {
+                    if (!cc.matched) {
+                        trackedVehicles.push({
+                            id: nextVehicleId++,
+                            x: cc.x,
+                            y: cc.y,
+                            framesSinceLastSeen: 0,
+                            matched: true
+                        });
+                        cumulativeVideoCount++;
+                        logEvent('system', `[AI-DETECTOR] New vehicle identified (ID #${nextVehicleId - 1}). Total cumulative video count: ${cumulativeVideoCount}`);
+                    }
+                });
+
+                // Clean up tracked vehicles that went off screen (not seen for 15 frames)
+                trackedVehicles = trackedVehicles.filter(tv => tv.framesSinceLastSeen < 15);
+
+                // Update cumulative GUI counter!
+                elements.videoCumulativeCount.innerText = cumulativeVideoCount;
+
                 // Reset metrics for this video frame
                 let detectedCars = 0;
                 let detectedTrucks = 0;
@@ -1263,6 +1329,7 @@ document.addEventListener('DOMContentLoaded', () => {
         elements.tabVideo.style.color = 'var(--text-muted)';
 
         elements.videoControlBar.style.display = 'none';
+        elements.videoCumulativeRow.style.display = 'none';
         elements.monitorVideo.pause();
         logEvent('system', 'Switched display to 2D Intersection Simulator.');
     });
@@ -1280,6 +1347,7 @@ document.addEventListener('DOMContentLoaded', () => {
         elements.tabSim.style.color = 'var(--text-muted)';
 
         elements.videoControlBar.style.display = 'flex';
+        elements.videoCumulativeRow.style.display = 'flex';
         
         // If a video is already loaded, resume play
         if (elements.monitorVideo.src) {
@@ -1294,6 +1362,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     elements.btnFeedA.addEventListener('click', () => {
         elements.videoStatus.innerText = 'Loading Sample Feed A...';
+        
+        // Reset cumulative video counts
+        cumulativeVideoCount = 0;
+        nextVehicleId = 1;
+        trackedVehicles = [];
+        elements.videoCumulativeCount.innerText = '0';
+
         elements.monitorVideo.src = sampleFeedAUrl;
         elements.monitorVideo.play()
             .then(() => {
@@ -1308,6 +1383,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     elements.btnFeedB.addEventListener('click', () => {
         elements.videoStatus.innerText = 'Loading Sample Feed B...';
+        
+        // Reset cumulative video counts
+        cumulativeVideoCount = 0;
+        nextVehicleId = 1;
+        trackedVehicles = [];
+        elements.videoCumulativeCount.innerText = '0';
+
         elements.monitorVideo.src = sampleFeedBUrl;
         elements.monitorVideo.play()
             .then(() => {
@@ -1325,6 +1407,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const file = e.target.files[0];
         if (file) {
             elements.videoStatus.innerText = `Loading: ${file.name}...`;
+            
+            // Reset cumulative video counts
+            cumulativeVideoCount = 0;
+            nextVehicleId = 1;
+            trackedVehicles = [];
+            elements.videoCumulativeCount.innerText = '0';
+
             const fileURL = URL.createObjectURL(file);
             elements.monitorVideo.src = fileURL;
             elements.monitorVideo.play()
